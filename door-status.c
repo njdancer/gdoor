@@ -60,13 +60,12 @@ int main(int argc, char **argv) {
     }
   }
 
+  printDoorStatus();
   if (watchFlag) {
     // wait for interrupts
     while(1) {
       sleep(UINT_MAX); // wait indefinitely
     }
-  } else {
-    printDoorStatus();
   }
 
   return 0;
