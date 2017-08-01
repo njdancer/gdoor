@@ -5,17 +5,22 @@ CC = gcc
 CFLAGS = -pthread -Wall
 LIBS = -lwiringPi
 
-all: switch-door door-status
+all: door-status identify switch-door
 
 release: all
-	sudo chown root:hapadmin switch-door door-status
-	sudo chmod u+s switch-door door-status
+	sudo chown root:hapadmin door-status identify switch-door
+	sudo chmod u+s door-status identify switch-door
 
-switch-door: switch-door.c
-	$(CC) $(CFLAGS) -o switch-door switch-door.c $(LIBS)
 
 door-status: door-status.c
 	$(CC) $(CFLAGS) -o door-status door-status.c $(LIBS)
 
+identify: identify.c
+	$(CC) $(CFLAGS) -o identify identify.c $(LIBS)
+
+switch-door: switch-door.c
+	$(CC) $(CFLAGS) -o switch-door switch-door.c $(LIBS)
+
+
 clean:
-	rm door-status switch-door
+	rm door-status identify switch-door
