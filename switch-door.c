@@ -5,13 +5,13 @@
 
 int main(void)
 {
-	wiringPiSetup();
+  wiringPiSetup();
 
-	pinMode(GARAGE_DOOR, OUTPUT);
+  pinMode(GARAGE_DOOR, OUTPUT);
 
-	digitalWrite(GARAGE_DOOR, LOW);
-	delay(SWITCH_DELAY);
-	digitalWrite(GARAGE_DOOR, HIGH);
+  digitalWrite(GARAGE_DOOR, LOW);
+  delay(SWITCH_DELAY);
+  digitalWrite(GARAGE_DOOR, HIGH);
 
-	return 0;
+  return 0;
 }
