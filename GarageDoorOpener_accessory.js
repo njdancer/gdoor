@@ -1,129 +1,196 @@
+/* IMPORTS */
+
 var Accessory = require('../').Accessory;
 var Service = require('../').Service;
 var Characteristic = require('../').Characteristic;
+var CurrentDoorState = Characteristic.CurrentDoorState;
+var TargetDoorState = Characteristic.TargetDoorState;
 var child_process = require("child_process");
-var debug = require('debug')('GarageDoor');
+var debug = require('debug')('GDoor');
 var uuid = require('../').uuid;
 var util = require("util");
 
-var accessoryName = "Garage Door";
+/* CONFIG */
+
+var accessoryName = "GDoor";
 var deviceMacAddress = "dc:44:6d:6d:6f:d8"
 var doorManufacturer = "Chamberlain";
 var doorModel = "Merlin Professional MT60P";
 var doorSerialNumber = deviceMacAddress
-var doorStatusCommand = "/home/hapadmin/gdoor/door-status";
 // must be of format ddd-dd-ddd - pick something random
 var pairingCode = "582-73-289";
 
-var GARAGE = {
-  updateDoorStatus: function(topSensorValue, bottomSensorValue) {
-    var debug = require('debug')('GarageDoor:SensorValues');
+/* STATE */
 
-    var gdo = garage.getService(Service.GarageDoorOpener);
-    if (topSensorValue === 1 && bottomSensorValue === 0) {
-      // top sensor open(HIGH) and bottom sensor closed(LOW) = door down
-      GARAGE.status = GARAGE.lastRestingStatus = Characteristic.CurrentDoorState.CLOSED;
-      debug("Door has closed - top sensor open(HIGH), bottom sensor closed(LOW)");
-      gdo.setCharacteristic(Characteristic.TargetDoorState, Characteristic.TargetDoorState.CLOSED);
-    } else if (topSensorValue === 0 && bottomSensorValue === 1) {
-      // top sensor closed(LOW) and bottom sensor open(HIGH) = door up
-      GARAGE.status = GARAGE.lastRestingStatus = Characteristic.CurrentDoorState.OPEN;
-      debug("Door has opened - top sensor closed(LOW), bottom sensor open(HIGH)");
-      gdo.setCharacteristic(Characteristic.TargetDoorState, Characteristic.TargetDoorState.OPEN);
-    } else if (topSensorValue === 1 && bottomSensorValue === 1) {
-      // both sensors open(HIGH) = door in between positions
-      if (GARAGE.lastRestingStatus === Characteristic.CurrentDoorState.CLOSED) {
-        GARAGE.status = Characteristic.CurrentDoorState.OPENING;
-        debug("Door is opening - both sensors open(HIGH), last resting status was closed");
-        gdo.setCharacteristic(Characteristic.TargetDoorState, Characteristic.TargetDoorState.OPEN);
-      } else if (GARAGE.lastRestingStatus === Characteristic.CurrentDoorState.OPEN) {
-        GARAGE.status = Characteristic.CurrentDoorState.CLOSING;
-        debug("Door is opening - both sensors open(HIGH), last resting status was open");
-        gdo.setCharacteristic(Characteristic.TargetDoorState, Characteristic.TargetDoorState.CLOSED );
-      } else {
-        debug("Door status unknown - both sensors open(HIGH) but last resting status is unknown")
-        return;
-      }
-    } else {
-      // both sensors closed(LOW) - this should not be possible, door cannot be in both states
-      debug("Door status unknown - both sensors closed(HIGH), possible hardware error");
-      return
+var currentDoorState;
+var lastRestingDoorState;
+
+/* GPIO FUNCTIONS */
+
+var gpioDebug = require('debug')('GDoor-GPIO');
+
+var switchDoor = function switchDoor(times, callback) {
+  // correct parameters in case only callback has been specified
+  if (typeof times === 'function') { callback = times; times = 1; }
+
+  // delay between switches in ms
+  var switchDelay = 2000;
+
+  gpioDebug("Switching door");
+  child_process.exec("~/gdoor/switch-door", function (err, data) {
+    if (err) {
+      // If command returns error bail out
+      gpioDebug(`Error switching door: ${err}`);
+      callback(err);
+      return;
     }
 
-    // push door status update to HAP
-    // TODO: find a better spot for this
-    garage.getService(Service.GarageDoorOpener)
-          .setCharacteristic(Characteristic.CurrentDoorState, GARAGE.status);
-  },
-  switch: function(times, callback) {
-    var cb = typeof times === 'function' ? times : callback
-    // delay between switches in ms
-    var switchDelay = 2000;
+    if (data !== "\n" && data !== "") {
+      // Log any response that isn't an empty line
+      gpioDebug(`switch-door: ${util.inspect(data)}`);
+    }
 
-    child_process.execSync("~/gdoor/switch-door");
     if (times !== undefined && typeof times !== 'function' && times > 1) {
+      // Recurse through function if multiple times specified
       setTimeout(function() {
-        GARAGE.switch(times - 1);
+        switchDoor(times - 1, callback);
       }, switchDelay);
-    } else if (typeof cb === 'function') {
-      cb();
+    } else if (typeof callback === 'function') {
+      callback(err, data);
     }
-  },
-  setDoorStatus: function(targetStatus, callback) {
-    var debug = require('debug')('GarageDoor:DoorSwitch');
+  });
+}
 
+var doorStatus = function doorStatus(callback) {
+  gpioDebug("Monitoring door status");
+  // Start long running process to watch door sensors
+  var process = child_process.spawn("/home/hapadmin/gdoor/door-status",["-w"]);
+
+  process.stdout.on('data', function(data) {
+    if (data === "\n" || data === "") {
+      // Ignore empty lines
+      return;
+    }
+
+    // Switch values have changed, process current values
+    var regex = /TOP (\d) BOTTOM (\d)/;
+    var doorSwitchValues = regex.exec(data);
+    if (doorSwitchValues.length !== 3) {
+      gpioDebug(`Invalid response from door-status: ${data}`);
+      return;
+    }
+
+    var doorState = {
+      top: Number(doorSwitchValues[1]),
+      bottom: Number(doorSwitchValues[2])
+    };
+
+    gpioDebug(`Sensor's updated to: ${util.inspect(doorState)}`)
+    callback(null, doorState);
+  });
+  process.stderr.on('data', function(err) {
+    gpioDebug(`Error running door-status: ${err}`);
+    callback(err);
+  });
+}
+
+var identify = function identify(callback) {
+  gpioDebug("Identifying");
+  child_process.exec("~/gdoor/identify", function(err, data) {
+    if (err) {
+      // If command returns error bail out
+      gpioDebug(`Error identifying: ${err}`);
+      callback(err);
+      return;
+    }
+
+    if (data !== "\n" && data !== "") {
+      // Log any response that isn't an empty line
+      gpioDebug(`identify: ${util.inspect(data)}`);
+    }
+
+    callback(err, data);
+  });
+}
+
+/* HAP SETUP */
+
+// Create GDoor accessory and provide basic information
+var garageUUID = uuid.generate('hap-nodejs:accessories:'+accessoryName);
+var gdoor = exports.accessory = new Accessory(accessoryName, garageUUID);
+
+// The following are only required when running Core.js
+gdoor.username = deviceMacAddress;
+gdoor.pincode = pairingCode;
+
+gdoor
+  .getService(Service.AccessoryInformation)
+  .setCharacteristic(Characteristic.Manufacturer, doorManufacturer)
+  .setCharacteristic(Characteristic.Model, doorModel)
+  .setCharacteristic(Characteristic.SerialNumber, doorSerialNumber);
+
+// Create garage door service under GDoor
+var gdo = gdoor.addService(Service.GarageDoorOpener, "Garage Door")
+
+/* HAP ACTIONS */
+
+gdoor.on('identify', function(paired, callback) {
+  GARAGE.identify(callback);
+});
+
+gdo.getCharacteristic(TargetDoorState)
+  .on('set', function(targetState, callback) {
     // configure values for later use or return from function
-    var newStatus;
-    var activeNewStatus;
-    var antiNewStatus;
-    var antiActiveNewStatus;
-    var stoppedStatusString;
-    var activeStatusString;
-    switch (targetStatus) {
+    var newState;
+    var activeNewState;
+    var antiNewState;
+    var antiActiveNewState;
+    var stoppedStateString;
+    var activeStateString;
+    switch (targetState) {
       case Characteristic.TargetDoorState.OPEN:
-        newStatus = Characteristic.CurrentDoorState.OPEN
-        activeNewStatus = Characteristic.CurrentDoorState.OPENING
-        antiNewStatus = Characteristic.CurrentDoorState.CLOSED
-        antiActiveNewStatus = Characteristic.CurrentDoorState.CLOSING
-        stoppedStatusString = "open"
-        activeStatusString = "opening"
+        newState = Characteristic.CurrentDoorState.OPEN
+        activeNewState = Characteristic.CurrentDoorState.OPENING
+        antiNewState = Characteristic.CurrentDoorState.CLOSED
+        antiActiveNewState = Characteristic.CurrentDoorState.CLOSING
+        stoppedStateString = "open"
+        activeStateString = "opening"
         break;
       case Characteristic.TargetDoorState.CLOSED:
-        newStatus = Characteristic.CurrentDoorState.CLOSED
-        activeNewStatus = Characteristic.CurrentDoorState.CLOSING
-        antiNewStatus = Characteristic.CurrentDoorState.OPEN
-        antiActiveNewStatus = Characteristic.CurrentDoorState.OPENING
-        stoppedStatusString = "closed"
-        activeStatusString = "closing"
+        newState = Characteristic.CurrentDoorState.CLOSED
+        activeNewState = Characteristic.CurrentDoorState.CLOSING
+        antiNewState = Characteristic.CurrentDoorState.OPEN
+        antiActiveNewState = Characteristic.CurrentDoorState.OPENING
+        stoppedStateString = "closed"
+        activeStateString = "closing"
         break;
       default:
-        debug("Invalid newStatus passed to setDoorStatus - this is likely a programming error");
+        debug("Invalid newState passed to setDoorState - this is likely a programming error");
+        callback()
         return;
     }
-    var activeStatusStringUc = activeStatusString.charAt(0).toUpperCase() + activeStatusString.slice(1)
+    var activeStateStringUc = activeStateString.charAt(0).toUpperCase() + activeStateString.slice(1)
 
     // trigger garage door switch depending on current status
-    switch (GARAGE.status) {
-      case newStatus:
-        debug(`Garage already ${stoppedStatusString}`);
+    switch (currentDoorState) {
+      case newState:
         callback();
         break;
-      case activeNewStatus:
-        debug(`Garage already ${activeStatusString}`);
+      case activeNewState:
         callback();
         break;
-      case antiNewStatus:
-        debug(`${activeStatusStringUc} the garage`);
-        GARAGE.switch(callback);
+      case antiNewState:
+        debug(`${activeStateStringUc} the garage`);
+        switchDoor(callback);
         break;
-      case antiActiveNewStatus:
-        debug(`${activeStatusStringUc} the garage`);
-        // if already moving switch will need to be triggered twice to stop and reverse
-        GARAGE.switch(2, callback);
+      case antiActiveNewState:
+        debug(`${activeStateStringUc} the garage - needs reversing`);
+        // if already moving, switch will need to be triggered twice to stop and reverse
+        switchDoor(2, callback);
         break;
-      case Characteristic.CurrentDoorState.STOPPED:
-        debug("Door stopped - moving in unknown direction");
-        GARAGE.switch(callback);
+      case CurrentDoorState.STOPPED:
+        debug("Door currently stopped - will start moving in unknown direction");
+        switchDoor(callback);
         break;
       default:
         debug("Unknown door state - bailing for safety and security");
@@ -132,120 +199,71 @@ var GARAGE = {
         callback();
         break;
     }
-  },
-  // open: function() {
-  //   GARAGE.setDoorStatus(Characteristic.CurrentDoorState.OPEN);
-  // },
-  // close: function() {
-  //   GARAGE.setDoorStatus(Characteristic.CurrentDoorState.CLOSED);
-  // },
-  identify: function(callback) {
-    debug("Identifying...");
-    child_process.exec("~/gdoor/identify", function(err, data) {
-      if (err) {
-        debug(`Identify - Error: ${err}`);
-        callback();
-        return;
-      }
-      if (data !== "\n" && data !== "") {
-        debug(`Identify: ${util.inspect(data)}`);
-      }
-      callback();
-      return;
-    });
-  }
-};
+  });
 
-// Monitor door status by running door-status in watch mode
-var doorStatus = child_process.spawn(doorStatusCommand, ["-w"]);
-doorStatus.stdout.on('data', function(data) {
-  if (data === "\n" || data === "") {
-    // ignore empty lines
+/* MONITOR */
+
+// create variable to store timer ID for stop tracking
+var movementTimer;
+doorStatus(function(err, sensors) {
+  if (err) {
+    debug(`Error updating door status: ${err}`);
+  }
+
+  if (sensors.top === 1 && sensors.bottom === 0) {
+    // top sensor open(HIGH) and bottom sensor closed(LOW) = door down
+    currentDoorState = lastRestingDoorState = CurrentDoorState.CLOSED;
+    debug("Door is closed");
+
+    // Door has reached final position so movement timer can be stopped
+    if (movementTimer !== null) {
+      clearTimeout(movementTimer);
+      movementTimer = null;
+    }
+  } else if (sensors.top === 0 && sensors.bottom === 1) {
+    // top sensor closed(LOW) and bottom sensor open(HIGH) = door up
+    currentDoorState = lastRestingDoorState = CurrentDoorState.OPEN;
+    debug("Door is open");
+
+    // Door has reached final position so movement timer can be stopped
+    if (movementTimer !== null) {
+      clearTimeout(movementTimer);
+      movementTimer = null;
+    }
+  } else if (sensors.top === 1 && sensors.bottom === 1) {
+    // both sensors open(HIGH) = door in between positions
+
+    if (movementTimer !== null) {
+      clearTimeout(movementTimer);
+    }
+    movementTimer = setTimeout(function() {
+      currentDoorState = CurrentDoorState.STOPPED
+      gdo.setCharacteristic(CurrentDoorState, currentDoorState);
+      debug("Door has stopped");
+    }, 22000);
+
+    if (lastRestingDoorState === CurrentDoorState.CLOSED) {
+      currentDoorState = CurrentDoorState.OPENING
+      debug("Door is opening");
+    } else if (lastRestingDoorState === CurrentDoorState.OPEN) {
+      currentDoorState = CurrentDoorState.CLOSING
+      debug("Door is closing");
+    } else {
+      debug("Door status unknown - door moving in unknown direction");
+      return;
+    }
+  } else {
+    // both sensors closed(LOW) - this should not be possible, door cannot be in both states
+    debug("Door status unknown - possible hardware error");
     return
   }
 
-  // Switch values have changed, process current values
-  var regex = /TOP (\d) BOTTOM (\d)/;
-  var doorSwitchValues = regex.exec(data);
-  if (doorSwitchValues.length !== 3) {
-    debug(`Invalid response from door-status: ${data}`);
-    return;
+  gdo.setCharacteristic(CurrentDoorState, currentDoorState);
+  if (currentDoorState === CurrentDoorState.OPENING ||
+      currentDoorState === CurrentDoorState.OPEN) {
+    gdo.setCharacteristic(TargetDoorState, TargetDoorState.OPEN);
+  } else if (currentDoorState === CurrentDoorState.CLOSING ||
+             currentDoorState === CurrentDoorState.CLOSED) {
+    gdo.setCharacteristic(TargetDoorState, TargetDoorState.CLOSED);
   }
-
-  var topSensorValue = Number(doorSwitchValues[1]);
-  var bottomSensorValue = Number(doorSwitchValues[2]);
-
-  GARAGE.updateDoorStatus(topSensorValue, bottomSensorValue);
 });
-doorStatus.stderr.on('data', function(data) {
-  var debug = require('debug')('GarageDoor:SensorValues');
-  debug("Error running door-status - %s", data);
-});
-
-var garageUUID = uuid.generate('hap-nodejs:accessories:'+accessoryName);
-var garage = exports.accessory = new Accessory(accessoryName, garageUUID);
-
-// Add properties for publishing (in case we're using Core.js and not BridgedCore.js)
-garage.username = deviceMacAddress; //edit this if you use Core.js
-garage.pincode = pairingCode;
-
-garage
-  .getService(Service.AccessoryInformation)
-  .setCharacteristic(Characteristic.Manufacturer, doorManufacturer)
-  .setCharacteristic(Characteristic.Model, doorModel)
-  .setCharacteristic(Characteristic.SerialNumber, doorSerialNumber);
-
-garage.on('identify', function(paired, callback) {
-  GARAGE.identify(callback);
-});
-
-garage
-  .addService(Service.GarageDoorOpener, "Garage Door")
-  .getCharacteristic(Characteristic.TargetDoorState)
-  .on('set', function(targetState, callback) {
-    console.log(targetState);
-    console.log(typeof callback);
-    if (targetState === Characteristic.TargetDoorState.CLOSED &&
-        GARAGE.status === Characteristic.CurrentDoorState.CLOSED) {
-      return
-      console.log("both closed");
-    }
-    if (targetState === Characteristic.TargetDoorState.OPEN &&
-        GARAGE.status === Characteristic.CurrentDoorState.OPEN) {
-      return
-      console.log("both open");
-    }
-
-    GARAGE.setDoorStatus(targetState, callback);
-    callback()
-    // if (value == Characteristic.TargetDoorState.CLOSED) {
-    //   GARAGE.close();
-    //   callback();
-    // } else if (value == Characteristic.TargetDoorState.OPEN) {
-    //   GARAGE.open();
-    //   callback();
-    // }
-  });
-
-// garage
-//   .getService(Service.GarageDoorOpener)
-//   .setCharacteristic(Characteristic.TargetDoorState,
-//     GARAGE.status === Characteristic.CurrentDoorState.CLOSED
-//       ? Characteristic.TargetDoorState.CLOSED
-//       : Characteristic.TargetDoorState.OPEN)
-
-garage
-  .getService(Service.GarageDoorOpener)
-  .getCharacteristic(Characteristic.CurrentDoorState)
-  .on('get', function(callback) {
-    if (GARAGE.status !== Characteristic.CurrentDoorState.OPEN &&
-        GARAGE.status !== Characteristic.CurrentDoorState.CLOSED &&
-        GARAGE.status !== Characteristic.CurrentDoorState.OPENING &&
-        GARAGE.status !== Characteristic.CurrentDoorState.CLOSING &&
-        GARAGE.status !== Characteristic.CurrentDoorState.STOPPED) {
-      callback("Garage status incorrectly set");
-      return;
-    }
-    callback(null, GARAGE.status);
-    return;
-  });
