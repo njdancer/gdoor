@@ -1,26 +1,41 @@
+# Makefile parameters
+BUILD_DIR = build
+INSTALL_DIR = $(DESTDIR)$(PREFIX)
+PREFIX = /usr/local
+
 # the compiler: gcc for C program, define as g++ for C++
 CC = gcc
 
 # compiler flags:
 CFLAGS = -pthread -Wall
-LIBS = -lwiringPi
+LDFLAGS = -lwiringPi
 
-all: door-status identify switch-door
+# generate list of required c binaries
+C_BIN = $(basename $(wildcard *.c))
+C_BUILD_PATHS = $(addprefix $(BUILD_DIR)/,$(C_BIN))
+C_INSTALL_PATHS = $(addprefix $(INSTALL_DIR)/bin/,$(C_BIN))
 
-release: all
-	sudo chown root:hapadmin door-status identify switch-door
-	sudo chmod u+s door-status identify switch-door
+.PHONY: all
+all: $(C_BUILD_PATHS)
 
+$(BUILD_DIR):
+	mkdir -p $@
 
-door-status: door-status.c
-	$(CC) $(CFLAGS) -o door-status door-status.c $(LIBS)
+# build rule
+$(BUILD_DIR)/%: %.c
+	mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-identify: identify.c
-	$(CC) $(CFLAGS) -o identify identify.c $(LIBS)
+# install rule
+$(INSTALL_DIR)/bin/%: $(BUILD_DIR)/%
+	mkdir -p $(dir $@)
+	cp $^ $@
 
-switch-door: switch-door.c
-	$(CC) $(CFLAGS) -o switch-door switch-door.c $(LIBS)
+.PHONY: install
+install: $(C_INSTALL_PATHS)
+	sudo chown root:hapadmin $(C_INSTALL_PATHS)
+	sudo chmod u+s $(C_INSTALL_PATHS)
 
-
+.PHONY: clean
 clean:
-	rm door-status identify switch-door
+	rm -Rf $(BUILD_DIR)

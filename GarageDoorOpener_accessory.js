@@ -37,7 +37,7 @@ var switchDoor = function switchDoor(times, callback) {
   var switchDelay = 2000;
 
   gpioDebug("Switching door");
-  child_process.exec("~/gdoor/switch-door", function (err, data) {
+  child_process.exec("/usr/local/bin/switch-door", function (err, data) {
     if (err) {
       // If command returns error bail out
       gpioDebug(`Error switching door: ${err}`);
@@ -64,7 +64,7 @@ var switchDoor = function switchDoor(times, callback) {
 var doorStatus = function doorStatus(callback) {
   gpioDebug("Monitoring door status");
   // Start long running process to watch door sensors
-  var process = child_process.spawn("/home/hapadmin/gdoor/door-status",["-w"]);
+  var process = child_process.spawn("/usr/local/bin/door-status",["-w"]);
 
   process.stdout.on('data', function(data) {
     if (data === "\n" || data === "") {
@@ -96,7 +96,7 @@ var doorStatus = function doorStatus(callback) {
 
 var identify = function identify(callback) {
   gpioDebug("Identifying");
-  child_process.exec("~/gdoor/identify", function(err, data) {
+  child_process.exec("/usr/local/bin/identify", function(err, data) {
     if (err) {
       // If command returns error bail out
       gpioDebug(`Error identifying: ${err}`);
