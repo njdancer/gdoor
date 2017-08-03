@@ -1,0 +1,11 @@
+[Unit]
+Description="XR819 - Prevent power saving modes"
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/xr819-keepalive
+Restart=always
+
+[Install]
+WantedBy=default.target

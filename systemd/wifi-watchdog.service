@@ -1,0 +1,12 @@
+[Unit]
+Description="WiFi Watchdog"
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/wifi-watchdog
+Restart=always
+User=nobody
+Group=nogroup
+
+[Install]
+WantedBy=default.target

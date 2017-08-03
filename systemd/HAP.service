@@ -1,0 +1,14 @@
+[Unit]
+Description="Homekit Accessory Protocol implementation written in nodejs"
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/node /home/hapadmin/HAP-NodeJS/Core.js
+WorkingDirectory=/home/hapadmin/HAP-NodeJS
+Restart=always
+User=hapadmin
+Group=hapadmin
+Environment=DEBUG=* NODE_ENV=production
+
+[Install]
+WantedBy=default.target
