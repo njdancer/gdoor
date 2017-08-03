@@ -1,0 +1,12 @@
+#!/bin/sh
+while true
+do
+  # Loop the following logic indefinitely
+
+  # Store gateway IP address to ping
+  gateway_ip=$(route -n | grep 'UG[ \t]' | awk '{print $2}')
+
+  # Ping this address every 0.1 seconds to prevent any power savings modes
+  # This is to resolve performance issues due to poor xr819 drivers
+  sudo ping -q -I wlan0 -s 1 -i 0.1 $gateway_ip
+done

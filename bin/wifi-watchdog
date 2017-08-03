@@ -1,0 +1,29 @@
+#!/bin/sh
+# Inspired by Sergiy Kolodyazhnyy(https://askubuntu.com/a/811738/336469)
+printf "Monitoring IP address on wlan0\n"
+
+while true
+do
+  # Loop the following logic indefinitely
+
+  # Initialise variable forcing ip check
+  wifi_info="Non-empty"
+
+  # Add slight delay to ensure wifi has been able to obtain address
+  sleep 15
+
+  # Obtain current address for wlan0 for as long as address is available
+  while [ -n "$wifi_info" ];
+  do
+    wifi_info=$(ip -4 -o addr show wlan0)
+    # repeat every second
+    sleep 1
+  done
+
+  # Restart WiFi as address is unavailable
+  printf "WiFi restarting - address unavailable\n"
+  nmcli radio wifi off && sleep 5 && nmcli radio wifi on
+
+  # Reset variable forcing ip check on next loop
+  wifi_info="Non-empty"
+done
