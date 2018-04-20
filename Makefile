@@ -20,7 +20,7 @@ LDFLAGS = -lwiringPi
 default: build
 
 .PHONY: install
-install: installbin installservices
+install: installprereqs installbin installservices
 
 
 # executable build rules
@@ -41,6 +41,16 @@ build: $(C_BUILD_PATHS)
 .PHONY: clean
 clean:
 	rm -Rf $(BUILD_DIR)
+
+
+# build prerequisite install rules
+
+installWiringPi:
+	git -C lib/WiringPi pull || git clone https://github.com/xpertsavenue/WiringOP-Zero.git lib/WiringPi
+	cd lib/WiringPi && make && sudo make install
+
+.PHONY: installbuildprereqs
+installbuildprereqs: installWiringPi
 
 
 # executable install rules
@@ -65,6 +75,7 @@ $(INSTALL_DIR)/bin/%: $(BIN_DIR)/%
 .PHONY: installbin
 installbin: $(C_INSTALL_PATHS) $(SHELL_INSTALL_PATHS)
 
+#TODO: clear out accessories folder
 
 # service install rules
 
@@ -81,3 +92,23 @@ $(SYSTEMD_INSTALL_DIR)/%: $(SYSTEMD_DIR)/%
 
 .PHONY: installservices
 installservices: $(SYSTEMD_INSTALL_PATHS)
+
+
+# prerequisite install rules
+
+installHAP: installMDNS installNode
+	git -C ../HAP-NodeJS pull || git clone https://github.com/KhaosT/HAP-NodeJS.git ../HAP-NodeJS
+	chown -R hapadmin:hapadmin ../HAP-NodeJS
+	cd ../HAP-NodeJS && npm rebuild && npm install
+
+installNode:
+	curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash -
+	apt-get update
+	apt-get install -y nodejs
+
+installMDNS:
+	apt-get update
+	apt-get install -y libnss-mdns libavahi-compat-libdnssd-dev
+
+.PHONY: installprereqs
+installprereqs: installHAP
